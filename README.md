@@ -24,7 +24,7 @@ Since this is an open-source tool, you need to use your own **Splitwise Personal
    * Provide Application Name, Application Description and Homepage URL
    * Agree to the terms and conditions and click on Register and get API Key
    * Click on the Create API Key button
-   * Copy the token (It starts with `Bearer ...` or is a long string).
+   * Copy the token
 2. **Configure App:**
    * Open **Split or No Split**.
    * Paste your token into the "API Key" field.
