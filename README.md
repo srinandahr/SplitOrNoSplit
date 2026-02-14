@@ -1,20 +1,20 @@
-# Split or No Split 💸
+# Split or No Split
 
 An Android automation tool that reads bank transaction SMS messages and automatically splits the expense on Splitwise.
 
 **Features:**
-* 📩 **Auto-Detection:** Listens for "Spent" or "Debited" SMS alerts from banks.
-* 🔔 **Actionable Notifications:** "Split" or "No Split" buttons right in the notification shade.
-* 🚀 **Instant Sync:** Adds expenses to your chosen Splitwise group in 1 click.
-* 🔒 **Privacy Focused:** "Bring Your Own Key" model. Your API keys never leave your device.
-* ⏸️ **Pause Mode:** Temporarily disable detection when you don't want to split.
+* **Auto-Detection:** Listens for "Spent" or "Debited" SMS alerts from banks.
+* **Actionable Notifications:** "Split" or "No Split" buttons right in the notification shade.
+* **Instant Sync:** Adds expenses to your chosen Splitwise group in 1 click.
+* **Privacy Focused:** "Bring Your Own Key" model. Your API keys never leave your device.
+* **Pause Mode:** Temporarily disable detection when you don't want to split.
 
-## 📱 Installation
+## Installation
 
 1. Go to the [Releases Page](https://github.com/srinandahr/SplitOrNoSplit/releases) and download the latest `.apk` file.
 2. Install it on your Android device (You may need to allow "Install from Unknown Sources").
 
-## ⚙️ Setup Guide (Important!)
+## Setup Guide (Important!)
 
 Since this is an open-source tool, you need to use your own **Splitwise Personal Token**. This ensures your data stays yours.
 
@@ -32,10 +32,10 @@ Since this is an open-source tool, you need to use your own **Splitwise Personal
    * Select your default group (e.g., "Flatmates").
    * Click **Save Settings**.
 
-## 🛠️ Built With
+## Built With
 * **Kotlin** - 100% Native Android.
 * **Retrofit** - For networking with Splitwise API.
 * **BroadcastReceivers** - For listening to SMS and Notification actions.
 
-## 📄 License
+## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
