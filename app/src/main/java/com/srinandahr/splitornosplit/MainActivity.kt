@@ -1,203 +1,322 @@
 package com.srinandahr.splitornosplit
 
 import android.Manifest
-import android.content.Context
-import android.content.pm.PackageManager
-import android.graphics.Color
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
-import android.widget.ArrayAdapter
-import android.widget.Button
-import android.widget.EditText
-import android.widget.Spinner
-import android.widget.TextView
-import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
+import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.Groups
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.srinandahr.splitornosplit.ui.AddExpenseScreen
+import com.srinandahr.splitornosplit.ui.AppViewModel
+import com.srinandahr.splitornosplit.ui.BalancesScreen
+import com.srinandahr.splitornosplit.ui.CreateProjectScreen
+import com.srinandahr.splitornosplit.ui.ExpensesScreen
+import com.srinandahr.splitornosplit.ui.GroupsScreen
+import com.srinandahr.splitornosplit.ui.JoinLink
+import com.srinandahr.splitornosplit.ui.JoinProjectScreen
+import com.srinandahr.splitornosplit.ui.PickMemberScreen
+import com.srinandahr.splitornosplit.ui.Screen
+import com.srinandahr.splitornosplit.ui.SettingsScreen
+import com.srinandahr.splitornosplit.ui.SetupScreen
+import com.srinandahr.splitornosplit.ui.ShareDialog
+import com.srinandahr.splitornosplit.ui.Tab
+import com.srinandahr.splitornosplit.ui.UiState
+import com.srinandahr.splitornosplit.ui.theme.SplitOrNoSplitTheme
+import androidx.lifecycle.viewmodel.compose.viewModel
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : ComponentActivity() {
 
-    // Store the fetched groups here
-    private var availableGroups = mutableListOf<Group>()
-    private val PERMISSION_REQUEST_CODE = 101
+    private val pendingLink: MutableState<String?> = mutableStateOf(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-
-        checkAndRequestPermissions()
-
-        // UI Elements
-        val etApiKey = findViewById<EditText>(R.id.et_api_key)
-        val btnFetch = findViewById<Button>(R.id.btn_fetch_groups)
-        val spinnerGroups = findViewById<Spinner>(R.id.spinner_groups)
-        val btnSave = findViewById<Button>(R.id.btn_save_config)
-        val tvStatus = findViewById<TextView>(R.id.tv_status)
-        val btnPause = findViewById<Button>(R.id.btn_pause) // The new Button
-        val btnReset = findViewById<Button>(R.id.btn_reset)
-
-        val sharedPref = getSharedPreferences("SplitAppPrefs", Context.MODE_PRIVATE)
-
-        // 1. LOAD SAVED DATA
-        val savedKey = sharedPref.getString("API_KEY", "")
-        val savedGroupId = sharedPref.getLong("GROUP_ID", 0L)
-        val savedGroupName = sharedPref.getString("GROUP_NAME", "None")
-
-        etApiKey.setText(savedKey?.replace("Bearer ", ""))
-
-        if (savedGroupId != 0L) {
-            tvStatus.text = "Active: Posting to '$savedGroupName'"
-            tvStatus.setTextColor(Color.parseColor("#388E3C")) // Dark Green
-
-            // Add saved group to list so spinner isn't empty
-            val savedList = listOf(savedGroupName ?: "Unknown")
-            val adapter = ArrayAdapter(this, R.layout.item_spinner, savedList)
-            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-            spinnerGroups.adapter = adapter
-        }
-
-        // 2. FETCH BUTTON LOGIC
-        btnFetch.setOnClickListener {
-            val apiKey = etApiKey.text.toString().trim()
-            if (apiKey.isEmpty()) {
-                Toast.makeText(this, "Enter API Key first!", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            val finalKey = if (apiKey.startsWith("Bearer ")) apiKey else "Bearer $apiKey"
-            Toast.makeText(this, "Fetching Groups...", Toast.LENGTH_SHORT).show()
-
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val response = SplitwiseNetwork.api.getGroups(finalKey)
-                    withContext(Dispatchers.Main) {
-                        availableGroups.clear()
-                        availableGroups.addAll(response.groups)
-
-                        val groupNames = availableGroups.map { it.name }
-                        val adapter = ArrayAdapter(this@MainActivity, R.layout.item_spinner, groupNames)
-                        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-                        spinnerGroups.adapter = adapter
-
-                        Toast.makeText(this@MainActivity, "Found ${availableGroups.size} groups!", Toast.LENGTH_SHORT).show()
-                    }
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-                    }
+        pendingLink.value = intent?.dataString
+        setContent {
+            SplitOrNoSplitTheme {
+                Surface(color = MaterialTheme.colorScheme.background) {
+                    AppRoot(pendingLink)
                 }
             }
-        }
-
-        // 3. PAUSE BUTTON LOGIC
-        // Helper function to update UI based on state
-        fun updatePauseButtonUI(isPaused: Boolean) {
-            if (isPaused) {
-                btnPause.text = "Resume App"
-                btnPause.setBackgroundColor(Color.parseColor("#F57C00")) // Orange
-                tvStatus.text = "App is Paused"
-                tvStatus.setTextColor(Color.parseColor("#F57C00"))
-            } else {
-                btnPause.text = "Pause App"
-                btnPause.setBackgroundColor(Color.parseColor("#2196F3")) // Blue
-
-                // Restore status text
-                val groupName = sharedPref.getString("GROUP_NAME", "")
-                if (groupName!!.isNotEmpty()) {
-                    tvStatus.text = "Active: Posting to '$groupName'"
-                    tvStatus.setTextColor(Color.parseColor("#388E3C")) // Green
-                } else {
-                    tvStatus.text = "Not Configured"
-                    tvStatus.setTextColor(Color.GRAY)
-                }
-            }
-        }
-
-        // Initialize State
-        var isPaused = sharedPref.getBoolean("isPaused", false)
-        updatePauseButtonUI(isPaused)
-
-        // Click Listener
-        btnPause.setOnClickListener {
-            isPaused = !isPaused
-            sharedPref.edit().putBoolean("isPaused", isPaused).apply()
-            updatePauseButtonUI(isPaused)
-            Toast.makeText(this, if(isPaused) "App Paused" else "App Resumed", Toast.LENGTH_SHORT).show()
-        }
-
-        // 4. SAVE BUTTON LOGIC
-        btnSave.setOnClickListener {
-            val selectedPosition = spinnerGroups.selectedItemPosition
-
-            // Validation: Make sure they actually fetched and picked something
-            if (availableGroups.isEmpty()) {
-                Toast.makeText(this, "Please Fetch Groups first", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            if (selectedPosition == -1) {
-                Toast.makeText(this, "Please select a group", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            // Get the selected group object using the position
-            val selectedGroup = availableGroups[selectedPosition]
-
-            val apiKey = etApiKey.text.toString().trim()
-            val finalKey = if (apiKey.startsWith("Bearer ")) apiKey else "Bearer $apiKey"
-
-            with(sharedPref.edit()) {
-                putString("API_KEY", finalKey)
-                putLong("GROUP_ID", selectedGroup.id)
-                putString("GROUP_NAME", selectedGroup.name)
-                apply()
-            }
-
-            tvStatus.text = "Active: Posting to '${selectedGroup.name}'"
-            tvStatus.setTextColor(Color.parseColor("#388E3C"))
-            Toast.makeText(this, "Configuration Saved", Toast.LENGTH_SHORT).show()
-
-            // If we were paused, this update doesn't auto-resume, but we ensure UI is consistent
-            if (!isPaused) updatePauseButtonUI(false)
-        }
-
-        // 5. RESET BUTTON LOGIC
-        btnReset.setOnClickListener {
-            sharedPref.edit().clear().apply()
-            etApiKey.text.clear()
-            spinnerGroups.adapter = null
-            availableGroups.clear()
-
-            tvStatus.text = "Status: Not Configured"
-            tvStatus.setTextColor(Color.RED)
-
-            // Reset pause state to default (False)
-            isPaused = false
-            updatePauseButtonUI(false)
-
-            Toast.makeText(this, "App Reset Successfully", Toast.LENGTH_SHORT).show()
         }
     }
 
-    private fun checkAndRequestPermissions() {
-        val permissionsToRequest = mutableListOf<String>()
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) != PackageManager.PERMISSION_GRANTED) {
-            permissionsToRequest.add(Manifest.permission.RECEIVE_SMS)
-        }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) {
-            permissionsToRequest.add(Manifest.permission.READ_SMS)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingLink.value = intent.dataString
+    }
+}
+
+@Composable
+private fun AppRoot(pendingLink: MutableState<String?>) {
+    val vm: AppViewModel = viewModel()
+    val state = vm.state
+    val snackbars = remember { SnackbarHostState() }
+    var showShare by remember { mutableStateOf(false) }
+
+    // SMS + notification permissions. READ_SMS was requested in v1 but never declared in
+    // the manifest, so it silently no-oped; the broadcast approach doesn't need it.
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { }
+
+    LaunchedEffect(Unit) {
+        val wanted = buildList {
+            add(Manifest.permission.RECEIVE_SMS)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
-        if (permissionsToRequest.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, permissionsToRequest.toTypedArray(), PERMISSION_REQUEST_CODE)
+        permissionLauncher.launch(wanted.toTypedArray())
+    }
+
+    // A join link may arrive from a QR scan in another app, or a shared invite.
+    LaunchedEffect(pendingLink.value) {
+        val raw = pendingLink.value ?: return@LaunchedEffect
+        pendingLink.value = null
+        JoinLink.parse(raw)?.let { (instance, id, code) ->
+            vm.handleJoinLink(instance, id, code)
+        }
+    }
+
+    LaunchedEffect(state.message) {
+        state.message?.let {
+            snackbars.showSnackbar(it)
+            vm.dismissMessage()
+        }
+    }
+
+    // Splits can be detected or actioned from the notification shade while the app is in the
+    // background, so re-read the pending list every time we come back to the foreground.
+    LifecycleResumeEffect(Unit) {
+        vm.refreshPending()
+        onPauseOrDispose { }
+    }
+
+    // Without this the system back button finishes the activity from every screen, so backing
+    // out of "Add expense" dropped the user on the launcher instead of the expense list.
+    val backHandled = when (state.screen) {
+        Screen.HOME -> state.tab != Tab.EXPENSES
+        Screen.SETUP -> state.active != null
+        else -> true
+    }
+    BackHandler(enabled = backHandled) {
+        if (state.screen != Screen.HOME) vm.back() else vm.selectTab(Tab.EXPENSES)
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        AnimatedContent(
+            targetState = state.screen,
+            transitionSpec = {
+                // Full-screen destinations slide up over the shell; going back fades out.
+                (fadeIn(tween(200)) + slideInVertically(tween(260)) { it / 10 })
+                    .togetherWith(fadeOut(tween(140)))
+            },
+            label = "screen",
+        ) { screen ->
+            when (screen) {
+                Screen.HOME -> HomeShell(state, vm) { showShare = true }
+
+                Screen.SETUP -> SetupScreen(
+                    onCreate = { vm.goTo(Screen.CREATE) },
+                    onJoin = { vm.goTo(Screen.JOIN) },
+                    canGoBack = state.active != null,
+                    onBack = vm::back,
+                )
+
+                Screen.CREATE -> CreateProjectScreen(
+                    busy = state.busy,
+                    onBack = vm::back,
+                    onCreate = { instance, name, email, currency, members ->
+                        vm.createProject(instance, name, email, currency, members)
+                    },
+                )
+
+                Screen.JOIN -> JoinProjectScreen(
+                    busy = state.busy,
+                    onBack = vm::back,
+                    onJoin = vm::joinProject,
+                )
+
+                Screen.PICK_MEMBER -> PickMemberScreen(
+                    members = (state.pendingProject ?: state.active)?.members.orEmpty(),
+                    onBack = vm::back,
+                    onPick = vm::confirmMember,
+                )
+
+                Screen.ADD_EXPENSE -> {
+                    val project = state.active
+                    if (project == null) vm.back()
+                    else AddExpenseScreen(
+                        project = project,
+                        busy = state.busy,
+                        onBack = vm::back,
+                        onSave = vm::addExpense,
+                    )
+                }
+            }
+        }
+
+        SnackbarHost(snackbars, Modifier.align(Alignment.BottomCenter))
+    }
+
+    if (showShare) {
+        state.active?.let { ShareDialog(it) { showShare = false } }
+    }
+
+    if (state.showLegacyNotice) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Splitwise support has ended") },
+            text = {
+                Text(
+                    "Splitwise now requires a paid subscription for API access, so this app has " +
+                        "moved to I Hate Money — free, open source, and no account needed.\n\n" +
+                        "Your old Splitwise expenses stay in Splitwise. Create or join a group " +
+                        "here to carry on splitting.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = vm::dismissLegacyNotice) { Text("Set up a group") }
+            },
+        )
+    }
+}
+
+private data class TabSpec(
+    val tab: Tab,
+    val label: String,
+    val selectedIcon: ImageVector,
+    val icon: ImageVector,
+)
+
+private val TABS = listOf(
+    TabSpec(
+        Tab.EXPENSES,
+        "Expenses",
+        Icons.AutoMirrored.Filled.ReceiptLong,
+        Icons.AutoMirrored.Outlined.ReceiptLong,
+    ),
+    TabSpec(Tab.BALANCES, "Balances", Icons.Filled.AccountBalanceWallet, Icons.Outlined.AccountBalanceWallet),
+    TabSpec(Tab.GROUPS, "Groups", Icons.Filled.Groups, Icons.Outlined.Groups),
+    TabSpec(Tab.SETTINGS, "Settings", Icons.Filled.Settings, Icons.Outlined.Settings),
+)
+
+/**
+ * The tabbed shell. NavigationBar is a sibling of the content rather than a Scaffold slot,
+ * so each tab can own its own Scaffold (top bar, FAB) without fighting over insets.
+ */
+@Composable
+private fun HomeShell(state: UiState, vm: AppViewModel, onShare: () -> Unit) {
+    Column(Modifier.fillMaxSize()) {
+        Box(Modifier.weight(1f)) {
+            AnimatedContent(
+                targetState = state.tab,
+                transitionSpec = {
+                    val forward = targetState.ordinal > initialState.ordinal
+                    val offset = if (forward) 1 else -1
+                    (fadeIn(tween(180)) + slideInHorizontally(tween(240)) { offset * it / 8 })
+                        .togetherWith(
+                            fadeOut(tween(140)) +
+                                slideOutHorizontally(tween(240)) { -offset * it / 8 },
+                        )
+                },
+                label = "tab",
+            ) { tab ->
+                when (tab) {
+                    Tab.EXPENSES -> ExpensesScreen(
+                        state = state,
+                        onRefresh = vm::refresh,
+                        onShare = onShare,
+                        onAddExpense = { vm.goTo(Screen.ADD_EXPENSE) },
+                        onOpenBalances = { vm.selectTab(Tab.BALANCES) },
+                        onAddMember = vm::addMember,
+                        onSplitPending = vm::splitPending,
+                        onDismissPending = vm::dismissPending,
+                        onClearAllPending = vm::clearAllPending,
+                    )
+
+                    Tab.BALANCES -> BalancesScreen(state)
+
+                    Tab.GROUPS -> GroupsScreen(
+                        state = state,
+                        onSelect = vm::setActive,
+                        onAddGroup = { vm.goTo(Screen.SETUP) },
+                        onRemove = vm::removeProject,
+                    )
+
+                    Tab.SETTINGS -> SettingsScreen(
+                        state = state,
+                        onSetPaused = vm::setPaused,
+                        onChangeMember = vm::changeMyMember,
+                        onShare = onShare,
+                        onAddMember = vm::addMember,
+                        onReset = vm::resetEverything,
+                    )
+                }
+            }
+        }
+
+        NavigationBar {
+            TABS.forEach { spec ->
+                val selected = state.tab == spec.tab
+                NavigationBarItem(
+                    selected = selected,
+                    onClick = { vm.selectTab(spec.tab) },
+                    icon = {
+                        Icon(
+                            if (selected) spec.selectedIcon else spec.icon,
+                            contentDescription = spec.label,
+                        )
+                    },
+                    label = { Text(spec.label) },
+                )
+            }
         }
     }
 }

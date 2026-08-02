@@ -5,47 +5,41 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
 import android.util.Log
+import com.srinandahr.splitornosplit.data.PendingSplitStore
+import com.srinandahr.splitornosplit.data.ProjectStore
+import com.srinandahr.splitornosplit.sms.SmsParser
 
 class SmsReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
 
-
-        val sharedPref = context.getSharedPreferences("SplitAppPrefs", Context.MODE_PRIVATE)
-        val isPaused = sharedPref.getBoolean("isPaused", false)
-
-        if (isPaused) {
-            Log.d("SMS_TEST", "App is PAUSED. Ignoring SMS.")
-            return // STOP HERE! Do not proceed.
+        if (ProjectStore(context).isPaused()) {
+            Log.d(TAG, "Paused - ignoring SMS")
+            return
         }
 
+        val store = PendingSplitStore(context)
+        var detected = false
 
-        if (intent.action == Telephony.Sms.Intents.SMS_RECEIVED_ACTION) {
+        for (sms in Telephony.Sms.Intents.getMessagesFromIntent(intent)) {
+            val body = sms.messageBody ?: continue
+            if (!SmsParser.looksLikeDebit(body)) continue
 
-            val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
-
-            for (sms in messages) {
-                val messageBody = sms.messageBody ?: ""
-
-
-                // 1. Check for "Sent Rs." or "debited"
-                if (messageBody.contains("Sent Rs.") || messageBody.contains("debited")) {
-
-                    // ... (Regex logic) ...
-                    val amountRegex = Regex("(?i)(?:Sent\\s+)?Rs\\.?\\s*([\\d,]+(?:\\.\\d{2})?)")
-                    val amountMatch = amountRegex.find(messageBody)
-                    val amount = amountMatch?.groupValues?.get(1)
-
-                    val payeeRegex = Regex("(?m)^To\\s+(.*)$")
-                    val payeeMatch = payeeRegex.find(messageBody)
-                    val payee = payeeMatch?.groupValues?.get(1)?.trim() ?: "Unknown"
-
-                    if (amount != null) {
-                        // Pass to notification
-                        NotificationHelper(context).showSplitNotification(amount, payee)
-                    }
-                }
-            }
+            val amount = SmsParser.parseAmount(body) ?: continue
+            val payee = SmsParser.parsePayee(body)
+            store.add(amount, payee)
+            detected = true
         }
+
+        // Re-post the whole stack rather than just the new item, so anything the user swiped
+        // away without deciding comes back alongside it. Expired rows are dropped by active().
+        if (detected) {
+            NotificationHelper(context).syncPendingNotifications(store.active())
+        }
+    }
+
+    private companion object {
+        const val TAG = "SmsReceiver"
     }
 }

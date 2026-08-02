@@ -5,87 +5,128 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import android.widget.Toast
-import android.app.NotificationManager
+import com.srinandahr.splitornosplit.data.PendingSplitStore
+import com.srinandahr.splitornosplit.data.ProjectStore
+import com.srinandahr.splitornosplit.data.currencySymbol
+import com.srinandahr.splitornosplit.split.IHateMoneyTarget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 class ActionReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        val pendingId = intent.getIntExtra(EXTRA_PENDING_ID, -1)
 
-        // 1. Dismiss the Notification
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.cancel(1)
+        when (intent.action) {
+            ACTION_SPLIT -> handleSplit(context, intent, pendingId)
 
-        // 2. Handle "SPLIT" Action
-        if (intent.action == "ACTION_SPLIT") {
-
-            // A. Get Data from the Intent (passed from SmsReceiver)
-            val amount = intent.getStringExtra("AMOUNT") ?: "0"
-            val payee = intent.getStringExtra("PAYEE") ?: "Unknown"
-
-            // B. READ SAVED SETTINGS (The "Memory")
-            val sharedPref = context.getSharedPreferences("SplitAppPrefs", Context.MODE_PRIVATE)
-            val apiKey = sharedPref.getString("API_KEY", "") ?: ""
-            val groupId = sharedPref.getLong("GROUP_ID", 0L)
-
-            // C. VALIDATION: Did the user setup the app?
-            if (apiKey.isEmpty() || groupId == 0L) {
-                Toast.makeText(context, "⚠️ Setup incomplete! Open App to configure.", Toast.LENGTH_LONG).show()
-
-                // Optional: Open the App for them
-                val mainIntent = Intent(context, MainActivity::class.java)
-                mainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(mainIntent)
-                return
+            ACTION_NO_SPLIT -> {
+                resolve(context, pendingId)
+                Toast.makeText(context, "Skipped", Toast.LENGTH_SHORT).show()
             }
 
-            // D. FEEDBACK: Tell user we are working
-            Toast.makeText(context, "Adding ₹$amount to Splitwise...", Toast.LENGTH_SHORT).show()
-
-            // E. THE NETWORK CALL (The "Muscle")
-            val goAsync = goAsync() // Keep app alive for background work
-
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    // 1. Create the Request Object
-                    val request = ExpenseRequest(
-                        cost = amount,
-                        description = payee,
-                        group_id = groupId,
-                        split_equally = true,
-                        currency_code = "INR"
-                    )
-
-                    // 2. Ensure Key has "Bearer " prefix
-                    val finalKey = if (apiKey.startsWith("Bearer ")) apiKey else "Bearer $apiKey"
-
-                    // 3. SEND TO SPLITWISE
-                    val response = SplitwiseNetwork.api.createExpense(finalKey, request)
-
-                    withContext(Dispatchers.Main) {
-                        if (response.isSuccessful) {
-                            Toast.makeText(context, "Success! Added to Splitwise.", Toast.LENGTH_LONG).show()
-                        } else {
-                            val errorError = response.errorBody()?.string() ?: "Unknown Error"
-                            Toast.makeText(context, "Failed: ${response.code()}", Toast.LENGTH_LONG).show()
-                            Log.e("SPLIT_API", "Error: $errorError")
-                        }
-                    }
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(context, "Network Error", Toast.LENGTH_SHORT).show()
-                        Log.e("SPLIT_API", "Exception: ${e.message}")
-                    }
-                } finally {
-                    goAsync.finish()
-                }
+            // Swiped away. The split is deliberately kept — it is still undecided and still
+            // listed in the app — but it is flagged so it is never posted to the shade again.
+            ACTION_DISMISSED -> if (pendingId >= 0) {
+                PendingSplitStore(context).markDismissed(pendingId)
             }
 
-        } else if (intent.action == "ACTION_NO_SPLIT") {
-            Toast.makeText(context, "Cancelled", Toast.LENGTH_SHORT).show()
+            ACTION_DISMISSED_ALL -> PendingSplitStore(context).markAllDismissed()
         }
+    }
+
+    private fun handleSplit(context: Context, intent: Intent, pendingId: Int) {
+        val amount = intent.getStringExtra(EXTRA_AMOUNT) ?: return
+        val payee = intent.getStringExtra(EXTRA_PAYEE) ?: "Unknown"
+
+        val store = ProjectStore(context)
+        val project = store.active()
+        val payerId = project?.myMemberId
+
+        if (project == null || payerId == null) {
+            // Leave it pending: the user has not decided, they simply cannot act yet.
+            Toast.makeText(context, "Set up a group first", Toast.LENGTH_LONG).show()
+            context.startActivity(
+                Intent(context, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            return
+        }
+
+        resolve(context, pendingId)
+
+        Toast.makeText(
+            context,
+            "Adding ${currencySymbol(project.currency)}$amount…",
+            Toast.LENGTH_SHORT,
+        ).show()
+
+        val pending = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val target = IHateMoneyTarget()
+
+                // Refresh members so someone who joined the group since the last app open is
+                // included. Bounded, because this whole block runs inside goAsync()'s ~10s
+                // window — if the refresh is slow we split across the cached list rather
+                // than losing the expense entirely.
+                val fresh = withTimeoutOrNull(4_000) {
+                    target.fetchMembers(project).getOrNull()
+                }
+                val members = fresh?.takeIf { it.isNotEmpty() } ?: project.members
+                if (fresh != null && fresh.isNotEmpty() && fresh != project.members) {
+                    store.upsert(project.copy(members = fresh))
+                }
+
+                if (members.isEmpty()) {
+                    toast(context, "No members in this group yet")
+                    return@launch
+                }
+
+                target.createExpense(
+                    project = project,
+                    amount = amount,
+                    description = payee,
+                    payerId = payerId,
+                    owerIds = members.map { it.id },
+                ).onSuccess {
+                    toast(context, "Split ${members.size} ways ✓")
+                }.onFailure { error ->
+                    Log.e(TAG, "Split failed", error)
+                    toast(context, error.message ?: "Could not add the expense")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Split failed", e)
+                toast(context, "Could not add the expense")
+            } finally {
+                pending.finish()
+            }
+        }
+    }
+
+    /** Drops the split from the pending list and rebuilds the remaining notification stack. */
+    private fun resolve(context: Context, pendingId: Int) {
+        if (pendingId < 0) return
+        val pendingStore = PendingSplitStore(context)
+        pendingStore.remove(pendingId)
+        NotificationHelper(context).clearNotification(pendingId, pendingStore.active())
+    }
+
+    private suspend fun toast(context: Context, text: String) = withContext(Dispatchers.Main) {
+        Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+    }
+
+    companion object {
+        const val ACTION_SPLIT = "ACTION_SPLIT"
+        const val ACTION_NO_SPLIT = "ACTION_NO_SPLIT"
+        const val ACTION_DISMISSED = "ACTION_DISMISSED"
+        const val ACTION_DISMISSED_ALL = "ACTION_DISMISSED_ALL"
+        const val EXTRA_AMOUNT = "AMOUNT"
+        const val EXTRA_PAYEE = "PAYEE"
+        const val EXTRA_PENDING_ID = "PENDING_ID"
+        private const val TAG = "ActionReceiver"
     }
 }
