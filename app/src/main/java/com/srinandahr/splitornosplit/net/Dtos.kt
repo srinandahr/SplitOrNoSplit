@@ -32,6 +32,8 @@ data class BillDto(
     val date: String?,
     val what: String?,
     @SerializedName("original_currency") val originalCurrency: String?,
+    /** "Expense" or "Reimbursement". Absent on instances older than the settle-up feature. */
+    @SerializedName("bill_type") val billType: String?,
 )
 
 /** One entry per member from /statistics — this is where the settlement maths comes from. */
@@ -40,4 +42,7 @@ data class StatisticsDto(
     val paid: Double?,
     val spent: Double?,
     val balance: Double?,
+    /** Settlement money sent / received. Null on older instances; `balance` includes them. */
+    val transferred: Double?,
+    val received: Double?,
 )

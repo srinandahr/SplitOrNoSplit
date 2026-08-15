@@ -61,6 +61,7 @@ import com.srinandahr.splitornosplit.ui.JoinProjectScreen
 import com.srinandahr.splitornosplit.ui.PickMemberScreen
 import com.srinandahr.splitornosplit.ui.Screen
 import com.srinandahr.splitornosplit.ui.SettingsScreen
+import com.srinandahr.splitornosplit.ui.SettleUpScreen
 import com.srinandahr.splitornosplit.ui.SetupScreen
 import com.srinandahr.splitornosplit.ui.ShareDialog
 import com.srinandahr.splitornosplit.ui.Tab
@@ -194,8 +195,25 @@ private fun AppRoot(pendingLink: MutableState<String?>) {
                     else AddExpenseScreen(
                         project = project,
                         busy = state.busy,
+                        editing = state.editing,
                         onBack = vm::back,
-                        onSave = vm::addExpense,
+                        onSave = if (state.editing != null) vm::updateExpense else vm::addExpense,
+                        onDelete = vm::deleteBill,
+                    )
+                }
+
+                Screen.SETTLE_UP -> {
+                    val project = state.active
+                    if (project == null) vm.back()
+                    else SettleUpScreen(
+                        project = project,
+                        busy = state.busy,
+                        suggestions = state.settlements,
+                        editing = state.editing,
+                        prefill = state.settlementDraft,
+                        onBack = vm::back,
+                        onRecord = vm::recordSettlement,
+                        onDelete = vm::deleteBill,
                     )
                 }
             }
@@ -279,9 +297,14 @@ private fun HomeShell(state: UiState, vm: AppViewModel, onShare: () -> Unit) {
                         onSplitPending = vm::splitPending,
                         onDismissPending = vm::dismissPending,
                         onClearAllPending = vm::clearAllPending,
+                        onSettleUp = { vm.goToSettleUp() },
+                        onOpenBill = vm::editBill,
                     )
 
-                    Tab.BALANCES -> BalancesScreen(state)
+                    Tab.BALANCES -> BalancesScreen(
+                        state = state,
+                        onSettleUp = { vm.goToSettleUp() },
+                    )
 
                     Tab.GROUPS -> GroupsScreen(
                         state = state,

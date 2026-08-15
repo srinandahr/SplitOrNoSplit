@@ -15,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -40,23 +41,46 @@ import androidx.compose.ui.Modifier
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.srinandahr.splitornosplit.data.Bill
+import com.srinandahr.splitornosplit.data.BillType
 import com.srinandahr.splitornosplit.data.Project
 import com.srinandahr.splitornosplit.data.currencySymbol
+import java.util.Locale
 
+/**
+ * Adds a new expense, or edits an existing one when [editing] is set.
+ *
+ * Only [BillType.EXPENSE] bills reach here — settlements are edited on the settle-up screen,
+ * whose from / to / amount shape actually matches them.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddExpenseScreen(
     project: Project,
     busy: Boolean,
+    editing: Bill?,
     onBack: () -> Unit,
     onSave: (amount: String, description: String, payerId: Int, owerIds: List<Int>) -> Unit,
+    onDelete: (Bill) -> Unit,
 ) {
-    var amount by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
-    var payerId by remember { mutableStateOf(project.myMemberId ?: project.members.firstOrNull()?.id) }
+    // Keyed on the bill id so opening a different expense re-seeds the form rather than
+    // carrying the previous one's values across.
+    var amount by remember(editing?.id) {
+        mutableStateOf(editing?.amount?.let { trimAmount(it) } ?: "")
+    }
+    var description by remember(editing?.id) { mutableStateOf(editing?.what ?: "") }
+    var payerId by remember(editing?.id) {
+        mutableStateOf(editing?.payerId ?: project.myMemberId ?: project.members.firstOrNull()?.id)
+    }
     var payerMenuOpen by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
     // Everyone is included by default — the common case, and what the SMS flow always does.
-    val owerIds = remember { mutableStateListOf<Int>().apply { addAll(project.members.map { it.id }) } }
+    // An existing bill restores whoever was actually on it.
+    val owerIds = remember(editing?.id) {
+        mutableStateListOf<Int>().apply {
+            addAll(editing?.owerIds ?: project.members.map { it.id })
+        }
+    }
 
     val payerName = project.members.firstOrNull { it.id == payerId }?.name ?: "Select"
     val amountValid = amount.toDoubleOrNull()?.let { it > 0 } == true
@@ -66,10 +90,21 @@ fun AddExpenseScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Add expense") },
+                title = { Text(if (editing != null) "Edit expense" else "Add expense") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    if (editing != null) {
+                        IconButton(onClick = { confirmDelete = true }) {
+                            Icon(
+                                Icons.Outlined.Delete,
+                                contentDescription = "Delete expense",
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                        }
                     }
                 },
             )
@@ -168,8 +203,25 @@ fun AddExpenseScreen(
                 modifier = Modifier.fillMaxWidth().height(54.dp),
             ) {
                 if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                else Text("Save expense")
+                else Text(if (editing != null) "Save changes" else "Save expense")
             }
         }
     }
+
+    if (confirmDelete && editing != null) {
+        ConfirmDialog(
+            title = "Delete this expense?",
+            body = "\"${editing.what.ifBlank { "Expense" }}\" will be removed from " +
+                "${project.name} for everyone, and balances will be recalculated. " +
+                "This cannot be undone.",
+            confirmLabel = "Delete",
+            onConfirm = { confirmDelete = false; onDelete(editing) },
+            onDismiss = { confirmDelete = false },
+        )
+    }
 }
+
+/** 250.0 renders as "250", 250.5 as "250.5" — matches what the amount field accepts. */
+private fun trimAmount(value: Double): String =
+    if (value % 1.0 == 0.0) value.toLong().toString()
+    else String.format(Locale.US, "%.2f", value).trimEnd('0').trimEnd('.')

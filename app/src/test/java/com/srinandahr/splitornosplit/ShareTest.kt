@@ -1,8 +1,11 @@
 package com.srinandahr.splitornosplit
 
 import com.srinandahr.splitornosplit.data.Bill
+import com.srinandahr.splitornosplit.data.BillType
 import com.srinandahr.splitornosplit.data.Member
+import com.srinandahr.splitornosplit.data.Project
 import com.srinandahr.splitornosplit.ui.ShareDirection
+import com.srinandahr.splitornosplit.ui.billSubtitle
 import com.srinandahr.splitornosplit.ui.groupByMonth
 import com.srinandahr.splitornosplit.ui.shareSummary
 import org.junit.Assert.assertEquals
@@ -97,6 +100,61 @@ class ShareTest {
     fun `treats an unset member as neutral rather than crashing`() {
         val b = bill(300.0, payerId = 1, owers = listOf(alice, bob))
         assertEquals(ShareDirection.NEUTRAL, shareSummary(b, myMemberId = null).direction)
+    }
+
+    @Test
+    fun `a settlement moves money without creating a new debt`() {
+        // Bob hands Alice 125 to pay down what he owes: his balance rises, hers falls.
+        val payment = bill(125.0, payerId = 2, owers = listOf(alice))
+            .copy(billType = BillType.REIMBURSEMENT, what = "Bob paid Alice")
+
+        assertEquals(125.0, payment.netFor(2), 0.001)
+        assertEquals(-125.0, payment.netFor(1), 0.001)
+        assertEquals(0.0, payment.netFor(3), 0.001)
+    }
+
+    @Test
+    fun `settlement rows say paid and received rather than lent and borrowed`() {
+        val payment = bill(125.0, payerId = 2, owers = listOf(alice))
+            .copy(billType = BillType.REIMBURSEMENT)
+
+        val payer = shareSummary(payment, myMemberId = 2)
+        assertEquals(ShareDirection.LENT, payer.direction)
+        assertEquals("you paid", payer.label)
+
+        val recipient = shareSummary(payment, myMemberId = 1)
+        assertEquals(ShareDirection.BORROWED, recipient.direction)
+        assertEquals("you received", recipient.label)
+    }
+
+    @Test
+    fun `settlement subtitle names both ends`() {
+        val project = Project(
+            instanceUrl = "https://ihatemoney.org",
+            projectId = "p",
+            privateCode = "c",
+            name = "Flat",
+            currency = "INR",
+            myMemberId = 2,
+            members = listOf(alice, bob),
+        )
+        val payment = bill(125.0, payerId = 2, owers = listOf(alice))
+            .copy(billType = BillType.REIMBURSEMENT)
+        assertEquals("You paid Alice ₹125.00", billSubtitle(payment, project))
+
+        val expense = bill(300.0, payerId = 1, owers = listOf(alice, bob))
+        assertEquals("Alice paid ₹300.00", billSubtitle(expense, project))
+    }
+
+    @Test
+    fun `an unknown bill_type from an older server is treated as an expense`() {
+        assertEquals(BillType.EXPENSE, BillType.fromWire(null))
+        assertEquals(BillType.EXPENSE, BillType.fromWire("Expense"))
+        assertEquals(BillType.EXPENSE, BillType.fromWire("something-new"))
+        assertEquals(BillType.REIMBURSEMENT, BillType.fromWire("Reimbursement"))
+        // The server validates strictly, so the wire value has to be exact.
+        assertEquals("Reimbursement", BillType.REIMBURSEMENT.wire)
+        assertEquals("Expense", BillType.EXPENSE.wire)
     }
 
     @Test

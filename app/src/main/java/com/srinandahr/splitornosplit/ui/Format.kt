@@ -1,6 +1,10 @@
 package com.srinandahr.splitornosplit.ui
 
+import com.srinandahr.splitornosplit.data.Balance
 import com.srinandahr.splitornosplit.data.Bill
+import com.srinandahr.splitornosplit.data.BillType
+import com.srinandahr.splitornosplit.data.Project
+import com.srinandahr.splitornosplit.data.Settlement
 import com.srinandahr.splitornosplit.data.currencySymbol
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -13,6 +17,36 @@ fun formatMoney(amount: Double, currency: String): String {
     val formatted = String.format(Locale.getDefault(), "%,.2f", abs(amount))
     val sign = if (amount < 0) "-" else ""
     return "$sign${currencySymbol(currency)}$formatted"
+}
+
+/**
+ * "You pay Srinanda ₹25.00" — a suggested transfer, phrased from the viewer's side so the
+ * one line they need to act on reads as an instruction rather than a fact about other people.
+ */
+fun settlementLine(settlement: Settlement, myMemberId: Int?, currency: String): String {
+    val money = formatMoney(settlement.amount, currency)
+    return when (myMemberId) {
+        settlement.fromId -> "You pay ${settlement.toName} $money"
+        settlement.toId -> "${settlement.fromName} pays you $money"
+        else -> "${settlement.fromName} pays ${settlement.toName} $money"
+    }
+}
+
+/**
+ * "paid ₹200.00 · share ₹100.00 · paid back ₹150.00" — the figures behind someone's balance.
+ *
+ * Settlements have to appear here or the line stops adding up: once money has changed hands,
+ * paid minus share no longer equals the balance shown beside it.
+ */
+fun balanceBreakdown(balance: Balance, currency: String): String = buildString {
+    append("paid ${formatMoney(balance.paid, currency)}")
+    append(" · share ${formatMoney(balance.spent, currency)}")
+    if (balance.transferred > 0.005) {
+        append(" · paid back ${formatMoney(balance.transferred, currency)}")
+    }
+    if (balance.received > 0.005) {
+        append(" · got back ${formatMoney(balance.received, currency)}")
+    }
 }
 
 /** Plain-language reading of a settlement balance. */
@@ -81,6 +115,17 @@ data class ShareSummary(
 fun shareSummary(bill: Bill, myMemberId: Int?): ShareSummary {
     if (myMemberId == null) return ShareSummary(ShareDirection.NEUTRAL, "not involved", 0.0)
     val net = bill.netFor(myMemberId)
+
+    // A settlement moves money rather than sharing a cost, so "lent" and "borrowed" would be
+    // actively misleading. The arithmetic is the same; only the wording changes.
+    if (bill.billType == BillType.REIMBURSEMENT) {
+        return when {
+            net > 0.005 -> ShareSummary(ShareDirection.LENT, "you paid", net)
+            net < -0.005 -> ShareSummary(ShareDirection.BORROWED, "you received", -net)
+            else -> ShareSummary(ShareDirection.NEUTRAL, "not involved", 0.0)
+        }
+    }
+
     return when {
         net > 0.005 -> ShareSummary(ShareDirection.LENT, "you lent", net)
         net < -0.005 -> ShareSummary(ShareDirection.BORROWED, "you borrowed", -net)
@@ -92,4 +137,24 @@ fun shareSummary(bill: Bill, myMemberId: Int?): ShareSummary {
 fun paidByLabel(bill: Bill, payerName: String?, myMemberId: Int?, currency: String): String {
     val who = if (bill.payerId == myMemberId) "You" else (payerName ?: "Someone")
     return "$who paid ${formatMoney(bill.amount, currency)}"
+}
+
+/**
+ * The row subtitle. Settlements name both ends ("You paid Srinanda ₹25.00") because who the
+ * money went to is the whole point of the entry.
+ */
+fun billSubtitle(bill: Bill, project: Project): String {
+    val currency = bill.currency ?: project.currency
+    val payerName = project.members.firstOrNull { it.id == bill.payerId }?.name
+    if (bill.billType != BillType.REIMBURSEMENT) {
+        return paidByLabel(bill, payerName, project.myMemberId, currency)
+    }
+    val who = if (bill.payerId == project.myMemberId) "You" else (payerName ?: "Someone")
+    val recipientId = bill.reimbursedMemberId
+    val recipient = when {
+        recipientId == null -> "someone"
+        recipientId == project.myMemberId -> "you"
+        else -> project.members.firstOrNull { it.id == recipientId }?.name ?: "someone"
+    }
+    return "$who paid $recipient ${formatMoney(bill.amount, currency)}"
 }

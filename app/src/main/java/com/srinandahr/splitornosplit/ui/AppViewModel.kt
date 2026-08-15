@@ -9,17 +9,23 @@ import androidx.lifecycle.viewModelScope
 import com.srinandahr.splitornosplit.NotificationHelper
 import com.srinandahr.splitornosplit.data.Balance
 import com.srinandahr.splitornosplit.data.Bill
+import com.srinandahr.splitornosplit.data.BillType
 import com.srinandahr.splitornosplit.data.PendingSplit
 import com.srinandahr.splitornosplit.data.PendingSplitStore
 import com.srinandahr.splitornosplit.data.Project
 import com.srinandahr.splitornosplit.data.ProjectStore
+import com.srinandahr.splitornosplit.data.Settlement
 import com.srinandahr.splitornosplit.data.key
+import com.srinandahr.splitornosplit.data.suggestSettlements
 import com.srinandahr.splitornosplit.net.Endpoints
 import com.srinandahr.splitornosplit.split.IHateMoneyTarget
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /** Full-screen destinations. The tabbed shell lives behind [Screen.HOME]. */
-enum class Screen { HOME, SETUP, CREATE, JOIN, PICK_MEMBER, ADD_EXPENSE }
+enum class Screen { HOME, SETUP, CREATE, JOIN, PICK_MEMBER, ADD_EXPENSE, SETTLE_UP }
 
 enum class Tab { EXPENSES, BALANCES, GROUPS, SETTINGS }
 
@@ -37,6 +43,10 @@ data class UiState(
     val pendingProject: Project? = null,
     /** Detected bank debits awaiting a Split / No Split decision, within the last 24 hours. */
     val pending: List<PendingSplit> = emptyList(),
+    /** The bill being edited, if any. Null means the expense/settle screen is in "add" mode. */
+    val editing: Bill? = null,
+    /** A suggested settlement the user tapped, used to prefill the settle-up form. */
+    val settlementDraft: Settlement? = null,
 ) {
     /** Your own settlement figure in the active group, from the server's statistics. */
     val myBalance: Double
@@ -50,6 +60,12 @@ data class UiState(
             val me = active?.myMemberId ?: return null
             return active.members.firstOrNull { it.id == me }?.name
         }
+
+    /** The payments that would clear the group, computed from the server's balances. */
+    val settlements: List<Settlement> get() = suggestSettlements(balances)
+
+    /** True once there is something to settle, which is what gates the Settle up entry points. */
+    val hasOutstandingBalances: Boolean get() = settlements.isNotEmpty()
 }
 
 class AppViewModel(private val app: Application) : AndroidViewModel(app) {
@@ -151,6 +167,8 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         state = state.copy(
             screen = if (state.active != null) Screen.HOME else Screen.SETUP,
             pendingProject = null,
+            editing = null,
+            settlementDraft = null,
         )
     }
 
@@ -222,19 +240,140 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         state = state.copy(busy = true)
         viewModelScope.launch {
             target.createExpense(project, amount, description, payerId, owerIds)
+                .onSuccess { finishBillEdit("Expense added") }
+                .onFailure { error ->
+                    state = state.copy(busy = false, message = error.friendly())
+                }
+        }
+    }
+
+    // ---- editing and deleting -----------------------------------------------
+
+    /** Opens a bill for editing, routing settlements to the settle-up form they came from. */
+    fun editBill(bill: Bill) {
+        state = state.copy(
+            editing = bill,
+            settlementDraft = null,
+            screen = if (bill.billType == BillType.REIMBURSEMENT) Screen.SETTLE_UP
+            else Screen.ADD_EXPENSE,
+        )
+    }
+
+    fun updateExpense(amount: String, description: String, payerId: Int, owerIds: List<Int>) {
+        val project = state.active ?: return
+        val bill = state.editing ?: return
+        state = state.copy(busy = true)
+        viewModelScope.launch {
+            target.updateExpense(
+                project = project,
+                billId = bill.id,
+                amount = amount,
+                description = description,
+                payerId = payerId,
+                owerIds = owerIds,
+                // The original date is preserved: editing an amount should not silently move
+                // an expense into the current month.
+                date = bill.date.ifBlank { null } ?: today(),
+                billType = bill.billType,
+            )
+                .onSuccess { finishBillEdit("Expense updated") }
+                .onFailure { error ->
+                    state = state.copy(busy = false, message = error.friendly())
+                }
+        }
+    }
+
+    fun deleteBill(bill: Bill) {
+        val project = state.active ?: return
+        state = state.copy(busy = true)
+        viewModelScope.launch {
+            target.deleteExpense(project, bill.id)
                 .onSuccess {
-                    state = state.copy(
-                        busy = false,
-                        screen = Screen.HOME,
-                        tab = Tab.EXPENSES,
-                        message = "Expense added",
+                    // Drop it locally straight away so the row disappears with the navigation
+                    // rather than lingering until the refresh lands.
+                    state = state.copy(bills = state.bills.filterNot { it.id == bill.id })
+                    finishBillEdit(
+                        if (bill.billType == BillType.REIMBURSEMENT) "Payment deleted"
+                        else "Expense deleted",
                     )
-                    refresh()
                 }
                 .onFailure { error ->
                     state = state.copy(busy = false, message = error.friendly())
                 }
         }
+    }
+
+    // ---- settling up --------------------------------------------------------
+
+    /** Opens the settle-up form, optionally prefilled from a suggested payment. */
+    fun goToSettleUp(prefill: Settlement? = null) {
+        state = state.copy(
+            screen = Screen.SETTLE_UP,
+            editing = null,
+            settlementDraft = prefill,
+        )
+    }
+
+    /**
+     * Records a payment from one member to another.
+     *
+     * This posts a Reimbursement rather than an expense: the money moves between two people
+     * instead of being shared out, so it pays a balance down rather than creating a new debt.
+     */
+    fun recordSettlement(fromId: Int, toId: Int, amount: String) {
+        val project = state.active ?: return
+        if (fromId == toId) {
+            state = state.copy(message = "Pick two different people")
+            return
+        }
+        val fromName = project.members.firstOrNull { it.id == fromId }?.name ?: "Someone"
+        val toName = project.members.firstOrNull { it.id == toId }?.name ?: "someone"
+        val editing = state.editing
+
+        state = state.copy(busy = true)
+        viewModelScope.launch {
+            val result = if (editing != null) {
+                target.updateExpense(
+                    project = project,
+                    billId = editing.id,
+                    amount = amount,
+                    description = "$fromName paid $toName",
+                    payerId = fromId,
+                    owerIds = listOf(toId),
+                    date = editing.date.ifBlank { null } ?: today(),
+                    billType = BillType.REIMBURSEMENT,
+                )
+            } else {
+                target.createExpense(
+                    project = project,
+                    amount = amount,
+                    description = "$fromName paid $toName",
+                    payerId = fromId,
+                    owerIds = listOf(toId),
+                    billType = BillType.REIMBURSEMENT,
+                )
+            }
+            result
+                .onSuccess {
+                    finishBillEdit(if (editing != null) "Payment updated" else "Payment recorded")
+                }
+                .onFailure { error ->
+                    state = state.copy(busy = false, message = error.friendly())
+                }
+        }
+    }
+
+    /** Returns to the expense list after a write, clearing edit state and pulling fresh data. */
+    private fun finishBillEdit(message: String) {
+        state = state.copy(
+            busy = false,
+            screen = Screen.HOME,
+            tab = Tab.EXPENSES,
+            editing = null,
+            settlementDraft = null,
+            message = message,
+        )
+        refresh()
     }
 
     // ---- onboarding ---------------------------------------------------------
@@ -350,6 +489,8 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         }
     }
 }
+
+private fun today(): String = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
 
 private fun Throwable.friendly(): String = when (this) {
     is java.net.UnknownHostException -> "No internet connection."

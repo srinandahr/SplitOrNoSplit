@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.Handshake
 import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Schedule
@@ -64,6 +66,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.srinandahr.splitornosplit.data.Bill
+import com.srinandahr.splitornosplit.data.BillType
 import com.srinandahr.splitornosplit.data.PendingSplit
 import com.srinandahr.splitornosplit.data.Project
 import com.srinandahr.splitornosplit.ui.theme.LedgerColors
@@ -80,6 +83,8 @@ fun ExpensesScreen(
     onSplitPending: (PendingSplit) -> Unit,
     onDismissPending: (PendingSplit) -> Unit,
     onClearAllPending: () -> Unit,
+    onSettleUp: () -> Unit,
+    onOpenBill: (Bill) -> Unit,
 ) {
     val project = state.active ?: return
     var showAddMember by remember { mutableStateOf(false) }
@@ -146,6 +151,8 @@ fun ExpensesScreen(
                     onOpenBalances = onOpenBalances,
                     onShare = onShare,
                     onAddMember = { showAddMember = true },
+                    onSettleUp = onSettleUp,
+                    canSettleUp = state.hasOutstandingBalances,
                 )
             }
 
@@ -191,6 +198,7 @@ fun ExpensesScreen(
                     ExpenseRow(
                         bill = bill,
                         project = project,
+                        onClick = { onOpenBill(bill) },
                         modifier = Modifier.animateItem(),
                     )
                 }
@@ -356,6 +364,8 @@ private fun ActionChipRow(
     onOpenBalances: () -> Unit,
     onShare: () -> Unit,
     onAddMember: () -> Unit,
+    onSettleUp: () -> Unit,
+    canSettleUp: Boolean,
 ) {
     Row(
         modifier = Modifier
@@ -364,6 +374,21 @@ private fun ActionChipRow(
             .padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        // Settle up leads while anyone is out of pocket — it is the action people come
+        // looking for once expenses have piled up.
+        if (canSettleUp) {
+            AssistChip(
+                onClick = onSettleUp,
+                label = { Text("Settle up") },
+                leadingIcon = { Icon(Icons.Outlined.Handshake, null, Modifier.size(18.dp)) },
+                colors = AssistChipDefaults.assistChipColors(
+                    containerColor = LedgerColors.lent,
+                    labelColor = Color.White,
+                    leadingIconContentColor = Color.White,
+                ),
+                border = null,
+            )
+        }
         AssistChip(
             onClick = onOpenBalances,
             label = { Text("Balances") },
@@ -402,9 +427,14 @@ private fun MonthHeader(month: String) {
 }
 
 @Composable
-private fun ExpenseRow(bill: Bill, project: Project, modifier: Modifier = Modifier) {
+private fun ExpenseRow(
+    bill: Bill,
+    project: Project,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val (monthAbbrev, day) = dateBlock(bill.date)
-    val payerName = project.members.firstOrNull { it.id == bill.payerId }?.name
+    val isSettlement = bill.billType == BillType.REIMBURSEMENT
     val share = shareSummary(bill, project.myMemberId)
     val shareColor = when (share.direction) {
         ShareDirection.LENT -> LedgerColors.lent
@@ -415,6 +445,7 @@ private fun ExpenseRow(bill: Bill, project: Project, modifier: Modifier = Modifi
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -436,17 +467,23 @@ private fun ExpenseRow(bill: Bill, project: Project, modifier: Modifier = Modifi
 
         Spacer(Modifier.width(12.dp))
 
+        // A settlement gets its own mark so it never reads as another cost being added.
         Box(
             modifier = Modifier
                 .size(46.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
+                .background(
+                    if (isSettlement) LedgerColors.lent.copy(alpha = 0.16f)
+                    else MaterialTheme.colorScheme.surfaceVariant,
+                ),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                Icons.AutoMirrored.Outlined.ReceiptLong,
+                if (isSettlement) Icons.Outlined.Handshake
+                else Icons.AutoMirrored.Outlined.ReceiptLong,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = if (isSettlement) LedgerColors.lent
+                else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(24.dp),
             )
         }
@@ -455,12 +492,12 @@ private fun ExpenseRow(bill: Bill, project: Project, modifier: Modifier = Modifi
 
         Column(Modifier.weight(1f)) {
             Text(
-                bill.what.ifBlank { "Expense" },
+                if (isSettlement) "Settled up" else bill.what.ifBlank { "Expense" },
                 style = MaterialTheme.typography.bodyLarge,
                 maxLines = 1,
             )
             Text(
-                paidByLabel(bill, payerName, project.myMemberId, bill.currency ?: project.currency),
+                billSubtitle(bill, project),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,

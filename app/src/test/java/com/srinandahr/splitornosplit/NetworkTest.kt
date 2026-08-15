@@ -24,6 +24,11 @@ class EndpointsTest {
             "https://ihatemoney.org/api/projects/demo/statistics",
             Endpoints.statistics(instance, "demo"),
         )
+        // Editing and deleting address a single bill by id.
+        assertEquals(
+            "https://ihatemoney.org/api/projects/demo/bills/755039",
+            Endpoints.bill(instance, "demo", 755039),
+        )
     }
 
     @Test

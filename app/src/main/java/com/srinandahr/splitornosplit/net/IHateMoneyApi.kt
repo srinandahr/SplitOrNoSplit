@@ -2,11 +2,13 @@ package com.srinandahr.splitornosplit.net
 
 import okhttp3.ResponseBody
 import retrofit2.Response
+import retrofit2.http.DELETE
 import retrofit2.http.Field
 import retrofit2.http.FormUrlEncoded
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Url
 
 /**
@@ -70,6 +72,33 @@ interface IHateMoneyApi {
         @Field("amount") amount: String,
         @Field("date") date: String,
         @Field("original_currency") originalCurrency: String,
+        /** Instances predating settle-up simply ignore this field, so it is safe to always send. */
+        @Field("bill_type") billType: String,
+    ): Response<ResponseBody>
+
+    /**
+     * Replaces a bill wholesale — the server re-validates the whole form, so every required
+     * field must be resent. Notably, omitting `bill_type` silently downgrades a Reimbursement
+     * back to an Expense, which would turn a recorded settlement into a fresh debt.
+     */
+    @FormUrlEncoded
+    @PUT
+    suspend fun updateBill(
+        @Url url: String,
+        @Header("Authorization") auth: String,
+        @Field("what") what: String,
+        @Field("payer") payer: Int,
+        @Field("payed_for") payedFor: @JvmSuppressWildcards List<Int>,
+        @Field("amount") amount: String,
+        @Field("date") date: String,
+        @Field("original_currency") originalCurrency: String,
+        @Field("bill_type") billType: String,
+    ): Response<ResponseBody>
+
+    @DELETE
+    suspend fun deleteBill(
+        @Url url: String,
+        @Header("Authorization") auth: String,
     ): Response<ResponseBody>
 
     @GET

@@ -33,6 +33,28 @@ data class Member(
     val activated: Boolean = true,
 )
 
+/**
+ * What a bill represents on the ledger.
+ *
+ * [REIMBURSEMENT] is how a settlement is recorded: one member hands money to another to pay
+ * down what they owe, rather than a cost being shared out. The arithmetic is identical to an
+ * expense — payer up, ower down — so only the wording and iconography differ.
+ *
+ * The server validates this strictly (an unknown value is a 400), so never send a raw string.
+ */
+enum class BillType {
+    EXPENSE,
+    REIMBURSEMENT;
+
+    val wire: String get() = if (this == REIMBURSEMENT) "Reimbursement" else "Expense"
+
+    companion object {
+        /** Older instances have no bill_type at all, so anything unrecognised is an expense. */
+        fun fromWire(value: String?): BillType =
+            if (value.equals("Reimbursement", ignoreCase = true)) REIMBURSEMENT else EXPENSE
+    }
+}
+
 data class Bill(
     val id: Int,
     val what: String,
@@ -42,6 +64,7 @@ data class Bill(
     val owers: List<Member>,
     val date: String,
     val currency: String?,
+    val billType: BillType = BillType.EXPENSE,
 ) {
     val owerIds: List<Int> get() = owers.map { it.id }
 
@@ -66,15 +89,27 @@ data class Bill(
         val paid = if (payerId == memberId) amount else 0.0
         return paid - shareOf(memberId)
     }
+
+    /** The person a settlement was paid to. Meaningless for an expense, hence null. */
+    val reimbursedMemberId: Int?
+        get() = if (billType == BillType.REIMBURSEMENT) owers.firstOrNull()?.id else null
 }
 
-/** Per-member settlement figures, as computed by the server's /statistics endpoint. */
+/**
+ * Per-member settlement figures, as computed by the server's /statistics endpoint.
+ *
+ * [transferred] and [received] cover money moved by settlements; both are absent on older
+ * instances and default to zero there. [balance] already accounts for them, so it stays the
+ * one figure worth trusting.
+ */
 data class Balance(
     val memberId: Int,
     val memberName: String,
     val paid: Double,
     val spent: Double,
     val balance: Double,
+    val transferred: Double = 0.0,
+    val received: Double = 0.0,
 )
 
 /** Currency symbols for the handful of currencies worth special-casing. */

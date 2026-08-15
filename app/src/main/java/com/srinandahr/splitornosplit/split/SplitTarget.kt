@@ -2,6 +2,7 @@ package com.srinandahr.splitornosplit.split
 
 import com.srinandahr.splitornosplit.data.Balance
 import com.srinandahr.splitornosplit.data.Bill
+import com.srinandahr.splitornosplit.data.BillType
 import com.srinandahr.splitornosplit.data.Member
 import com.srinandahr.splitornosplit.data.Project
 
@@ -25,7 +26,27 @@ interface SplitTarget {
         description: String,
         payerId: Int,
         owerIds: List<Int>,
+        billType: BillType = BillType.EXPENSE,
+        date: String? = null,
     ): Result<Unit>
+
+    /**
+     * Overwrites an existing bill. Every field is required because the server replaces the
+     * whole record rather than patching it, [billType] very much included — see
+     * `IHateMoneyApi.updateBill`.
+     */
+    suspend fun updateExpense(
+        project: Project,
+        billId: Int,
+        amount: String,
+        description: String,
+        payerId: Int,
+        owerIds: List<Int>,
+        date: String,
+        billType: BillType,
+    ): Result<Unit>
+
+    suspend fun deleteExpense(project: Project, billId: Int): Result<Unit>
 
     suspend fun fetchBalances(project: Project): Result<List<Balance>>
 

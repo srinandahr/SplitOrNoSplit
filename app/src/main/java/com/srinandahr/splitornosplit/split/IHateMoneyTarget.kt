@@ -2,6 +2,7 @@ package com.srinandahr.splitornosplit.split
 
 import com.srinandahr.splitornosplit.data.Balance
 import com.srinandahr.splitornosplit.data.Bill
+import com.srinandahr.splitornosplit.data.BillType
 import com.srinandahr.splitornosplit.data.Member
 import com.srinandahr.splitornosplit.data.Project
 import com.srinandahr.splitornosplit.net.ApiClient
@@ -43,6 +44,8 @@ class IHateMoneyTarget(
         description: String,
         payerId: Int,
         owerIds: List<Int>,
+        billType: BillType,
+        date: String?,
     ): Result<Unit> = io {
         require(owerIds.isNotEmpty()) { "No members to split between" }
         val response = api.createBill(
@@ -54,10 +57,46 @@ class IHateMoneyTarget(
             // split_equally flag as there was on Splitwise.
             payedFor = owerIds,
             amount = amount,
-            date = today(),
+            date = date ?: today(),
             originalCurrency = project.currency,
+            billType = billType.wire,
         )
-        response.requireSuccess("add expense")
+        response.requireSuccess(if (billType == BillType.REIMBURSEMENT) "record payment" else "add expense")
+    }
+
+    override suspend fun updateExpense(
+        project: Project,
+        billId: Int,
+        amount: String,
+        description: String,
+        payerId: Int,
+        owerIds: List<Int>,
+        date: String,
+        billType: BillType,
+    ): Result<Unit> = io {
+        require(owerIds.isNotEmpty()) { "No members to split between" }
+        val response = api.updateBill(
+            url = Endpoints.bill(project.instanceUrl, project.projectId, billId),
+            auth = project.auth,
+            what = description,
+            payer = payerId,
+            payedFor = owerIds,
+            amount = amount,
+            date = date,
+            originalCurrency = project.currency,
+            billType = billType.wire,
+        )
+        response.requireSuccess("save changes")
+    }
+
+    override suspend fun deleteExpense(project: Project, billId: Int): Result<Unit> = io {
+        val response = api.deleteBill(
+            Endpoints.bill(project.instanceUrl, project.projectId, billId),
+            project.auth,
+        )
+        // A 404 means somebody else already deleted it. The end state is what was asked for,
+        // so treat it as done rather than showing an error for a row about to vanish anyway.
+        if (response.code() != 404) response.requireSuccess("delete expense")
     }
 
     override suspend fun fetchBalances(project: Project): Result<List<Balance>> = io {
@@ -75,6 +114,9 @@ class IHateMoneyTarget(
                 // magnitude so callers can render "share ₹475" without special-casing a sign.
                 spent = abs(stat.spent ?: 0.0),
                 balance = stat.balance ?: 0.0,
+                transferred = stat.transferred ?: 0.0,
+                // `received` comes back negative for the same reason `spent` does.
+                received = abs(stat.received ?: 0.0),
             )
         }
     }
@@ -96,6 +138,7 @@ class IHateMoneyTarget(
                     owers = dto.owers?.map { it.toMember() }.orEmpty(),
                     date = dto.date.orEmpty(),
                     currency = dto.originalCurrency,
+                    billType = BillType.fromWire(dto.billType),
                 )
             }
     }

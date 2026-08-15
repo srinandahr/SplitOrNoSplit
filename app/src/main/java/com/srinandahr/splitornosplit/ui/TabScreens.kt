@@ -27,6 +27,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Handshake
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
@@ -34,6 +35,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,9 +54,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.srinandahr.splitornosplit.data.Project
+import com.srinandahr.splitornosplit.data.Settlement
 import com.srinandahr.splitornosplit.data.key
 import com.srinandahr.splitornosplit.ui.theme.LedgerColors
 import kotlin.math.abs
@@ -64,14 +68,28 @@ import kotlin.math.max
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BalancesScreen(state: UiState) {
+fun BalancesScreen(state: UiState, onSettleUp: () -> Unit) {
     val project = state.active ?: return
     val maxAbs = max(state.balances.maxOfOrNull { abs(it.balance) } ?: 1.0, 0.01)
+    val settlements = state.settlements
 
-    Scaffold(topBar = { TopAppBar(title = { Text("Balances") }) }) { padding ->
+    Scaffold(
+        topBar = { TopAppBar(title = { Text("Balances") }) },
+        floatingActionButton = {
+            if (settlements.isNotEmpty()) {
+                ExtendedFloatingActionButton(
+                    onClick = onSettleUp,
+                    icon = { Icon(Icons.Outlined.Handshake, contentDescription = null) },
+                    text = { Text("Settle up") },
+                    containerColor = LedgerColors.lent,
+                    contentColor = Color.White,
+                )
+            }
+        },
+    ) { padding ->
         LazyColumn(
             modifier = Modifier.padding(padding),
-            contentPadding = PaddingValues(16.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             if (state.balances.isEmpty()) {
@@ -82,6 +100,27 @@ fun BalancesScreen(state: UiState) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+
+            // Spelling out who pays whom turns a column of signed numbers into instructions.
+            if (settlements.isNotEmpty()) {
+                item(key = "settle-header") {
+                    Text(
+                        "To settle up",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                items(settlements, key = { "s-${it.fromId}-${it.toId}" }) { s ->
+                    val mine = s.fromId == project.myMemberId || s.toId == project.myMemberId
+                    Text(
+                        settlementLine(s, project.myMemberId, project.currency),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (mine) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                item(key = "settle-divider") { HorizontalDivider() }
             }
             items(state.balances.sortedByDescending { it.balance }, key = { it.memberId }) { b ->
                 val isMe = b.memberId == project.myMemberId
@@ -126,8 +165,7 @@ fun BalancesScreen(state: UiState) {
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            "paid ${formatMoney(b.paid, project.currency)} · " +
-                                "share ${formatMoney(b.spent, project.currency)}",
+                            balanceBreakdown(b, project.currency),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

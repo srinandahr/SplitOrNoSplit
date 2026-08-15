@@ -18,6 +18,7 @@ object Endpoints {
     fun project(instance: String, id: String) = "${projects(instance)}/$id"
     fun members(instance: String, id: String) = "${project(instance, id)}/members"
     fun bills(instance: String, id: String) = "${project(instance, id)}/bills"
+    fun bill(instance: String, id: String, billId: Int) = "${bills(instance, id)}/$billId"
     fun statistics(instance: String, id: String) = "${project(instance, id)}/statistics"
 }
 

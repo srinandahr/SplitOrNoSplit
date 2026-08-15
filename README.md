@@ -8,6 +8,8 @@ An Android automation tool that reads bank transaction SMS messages and splits t
 - **Actionable Notifications:** "Split" or "No Split" buttons right in the notification shade.
 - **Instant Sync:** Adds the expense to your group, split equally, in 1 click.
 - **Balances In-App:** See who owes what and your recent expenses without leaving the app.
+- **Settle Up:** Record who paid whom. The app suggests the payments that clear the group in the fewest transfers, and partial payments are fine.
+- **Edit and Delete:** Tap any expense to fix the amount, change who paid or who splits it, or remove it entirely.
 - **Multiple Groups:** Flatmates and a trip at the same time — switch between them.
 - **No Account, No API Key:** Create a group from the app. Nothing to sign up for.
 - **Pause Mode:** Temporarily disable detection when you don't want to split.
