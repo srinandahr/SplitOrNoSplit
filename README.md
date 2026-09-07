@@ -1,5 +1,9 @@
 # Split or No Split
 
+
+> [!WARNING]
+> This repo is entirely vibe coded
+
 An Android automation tool that reads bank transaction SMS messages and splits the expense with your group in one tap.
 
 **Features:**
